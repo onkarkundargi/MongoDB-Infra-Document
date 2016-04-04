@@ -1,0 +1,214 @@
+
+Mongodb Sharding documentation
+Security Group Details
+
+
+Security port group
+Port number
+Mongo Query Router (Mongos)
+27020
+SSH
+22
+Mongo config server
+27019
+Mongo client (Relication server)
+27017
+Common Setup Instruction for all MongoDb Servers:
+//Import the public key used by the package management system
+sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv 7F0CEB10
+
+//Create a list file for MongoDB.
+echo "deb http://repo.mongodb.org/apt/ubuntu trusty/mongodb-org/3.0 multiverse" | sudo tee   /etc/apt/sources.list.d/mongodb-org-3.0.list
+	
+//Update System
+sudo apt-get update
+sudo apt-get install build-essential
+
+//Install Mongo DB version 3.0.4
+sudo apt-get install -y mongodb-org=3.0.4 mongodb-org-server=3.0.4 mongodb-org-shell=3.0.4 mongodb-org-mongos=3.0.4 mongodb-org-tools=3.0.4
+	
+//By default the number of open files pro user in Ubuntu 14.04 is 1024. 
+//In my case this number was too small so I have to increase it.
+//This is done with the ulimit command.
+
+// see all the kernel parameters to check file size
+ulimit -a 
+
+// see the number of open files
+ulimit -n 
+
+//First, in order to set this options automatically you have to edit the 
+//etc/security/limits.conf file.
+sudo vi /etc/security/limits.conf
+
+//The # means that this part is commented.The wildcard * means for all users.
+//We need to set the nofile option meaning maximum number of open files.
+//If you want to change the number of files of user, you should add this line in 
+//the limits.conf:
+
+ubuntu soft nofile 65000
+ubuntu hard nofile 65000
+
+// Second you have to add a line in the /etc/pam.d/common-session file:
+//open the file in gedit
+
+sudo vi /etc/pam.d/common-session
+ 
+//Then add the line:
+session required pam_limits.so
+
+// Reboot system
+sudo reboot now
+
+//Verfiy ulimit setting have changed
+ulimit -a
+
+//Time Synchronisation with all Server:
+//Use following command to sync time of all server.
+
+ntpdate -s ntp.ubuntu.com
+sudo apt-get install ntp
+sudo service ntp stop
+sudo ntpdate -s time.nist.gov
+sudo service ntp start
+
+//  install opnssl server for key geneartion
+		
+sudo apt-get install openssl                   
+openssl rand -base64 741 > mongodb-keyfile
+chmod 600 mongodb-keyfile
+                   
+// copy mongodb-key file to all hosts
+scp -i <sslkey> <>
+
+//Goto Aws and creeate AMI so we dont have to repeate above steps
+Config server setup:
+// create directory using following command:
+sudo mkdir -p /data/db
+// create configdb dicrectory:
+ sudo mkdir /data/configdb
+// change ownership 
+sudo chown ubuntu /data/configdb
+mongod --configsvr --fork --logpath /home/ubuntu/configlog/config.log --keyFile  /home/ubuntu/mongodb-keyfile		        
+// here config server is created and it is waiting for mongos. It will open port 27019 for connection.
+Query router or mongos setup:
+// Use following command to create mongos
+Mongos –configdb with ip address:port number
+// for example:
+mongos --configdb ipaddress:port,ipaddress:port ,ipaddress:port --logpath /home/ubuntu/log  --keyFile /home/ubuntu/mongodb-keyfile
+ // After this command mongos will get connected with config server. Here 27019 is for config server and mongos port is 27020.
+
+ mongos --configdb ipaddress  --fork --logpath /log_storage/mongoslog_2016_new.log --keyFile /home/ubuntu/mongodb-keyfile_prod 
+ Replication  Setup:
+ //  command to create replication:
+   mongod --replSet rplset1 --fork --logpath /home/ubuntu/replicationlog/replog17.log --keyFile /home/ubuntu/mongodb-keyFile   
+// here rplset1 is replication name.
+// Run the same command on all replication instance.
+// Login to mongo with port 27017
+use admin
+// then type following command to initiate replication
+rs.initiate()
+rs.initiate({_id:"rplset1", members: [{"_id":1, "host":"ipaddress:port})
+// to check configuration use following command
+rs.conf()
+verify output is similar to below snippet: 
+{
+   "_id" : "rs0",
+   "version" : 1,
+   "members" : [
+      {
+         "_id" : 1,
+         "host" : "ip of primary:27017"
+      }
+   ]
+}
+
+// To add replica set under same primary use 
+rs.add("ip address:port number")
+// To make one of the among arbiter user
+rs.add("ip address:port number",true)
+// to check status of replication use
+rs.status()
+// To check replication on secondary db use
+// log in to mongo using
+// mongo or mongo admin
+// type following command 
+rs.slaveOk()
+
+          //run ur db commands
+ Sharding setup:
+// go to mongo query server
+// run
+// mongo ip of mongo :port /admin  
+mongo ipaddress:27020    
+  // once login into mongos
+sh.status()
+ //  To add shard use following command
+ db.runCommand({"addshard" : "rs0/ipaddress:27017"})
+// To remove shard use following command
+db.runCommand( { removeShard: "ipaddress:27017" } )
+
+
+Change oplog size:
+//  Log in to mongo replica set using command
+mongo –host ip address –port
+// if it is primary replica use following command
+rs.stepDown()
+	           //Restart a Secondary in Standalone Mode on a Different Port
+// Shut down the mongod instance for one of the non-primary members of your replica set. For 
+// example, to shut down, use the db.shutdownServer() method: 
+       db.shutdownServer()
+ //Restart this mongod as a standalone instance running on a different port and without the --replSet 
+// parameter. Use a command similar to the following:
+       mongod --port 37017 --dbpath /srv/mongodb
+Recreate the Oplog with a New Size and a Seed Entry
+//Save the last entry from the oplog. For example, connect to the instance using the mongo shell, and 
+// enter the following command to switch to the local database:
+use local
+ // In mongo shell scripts you can use the following operation to set the db object:
+db = db.getSiblingDB('local')
+ // Ensure that the temp temporary collection is empty by dropping the collection:
+db.temp.drop()
+
+ // Use the db.collection.save() method and a sort on reverse natural order to find the last entry and save it to a temporary collection:
+db.temp.save( db.oplog.rs.find( { }, { ts: 1, h: 1 } ).sort( {$natural : -1} ).limit(1).next() )
+// To see this oplog entry, use the following operation:
+db.temp.find()
+// Remove the Existing Oplog Collection
+// Drop the old oplog.rs collection in the local database. Use the following command:
+db = db.getSiblingDB('local')
+            db.oplog.rs.drop()
+           // This returns true in the shell.
+Create a New Oplog
+// Use the create command to create a new oplog of a different size. Specify the size argument in bytes. A value of 2 * 1024 * 1024 * 1024 will create a new oplog that’s 2 gigabytes:
+
+db.runCommand( { create: "oplog.rs", capped: true, size: (2 * 1024 * 1024 * 1024) } )
+
+// Upon success, this command returns the following status:
+
+// { "ok" : 1 }
+Insert the Last Entry of the Old Oplog into the New Oplog
+//Insert the previously saved last entry from the old oplog into the new oplog. For example:
+
+db.oplog.rs.save( db.temp.findOne() )
+
+// To confirm the entry is in the new oplog, use the following operation:
+
+db.oplog.rs.find()
+Restart the Member
+//Restart the mongod as a member of the replica set on its usual port. For example:
+db.shutdownServer()
+            mongod --replSet rs0 --dbpath /srv/mongodb
+           //The replica set member will recover and “catch up” before it is eligible for election to primary.
+           Repeat Process for all Members .
+ 
+
+
+
+
+
+References:
+ https://docs.mongodb.org/manual/
+http://posidev.com/blog/2009/06/04/set-ulimit-parameters-on-ubuntu/
+https://help.ubuntu.com/lts/serverguide/NTP.html
+
