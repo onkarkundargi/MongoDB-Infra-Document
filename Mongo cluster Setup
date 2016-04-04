@@ -81,7 +81,6 @@ chmod 600 mongodb-keyfile
 // copy mongodb-key file to all hosts
 scp -i <sslkey> <>
 
-//Goto Aws and creeate AMI so we dont have to repeate above steps
 Config server setup:
 // create directory using following command:
 sudo mkdir -p /data/db
